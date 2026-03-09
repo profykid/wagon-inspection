@@ -9,16 +9,18 @@ from streamlit_drawable_canvas import st_canvas
 import plotly.express as px
 from reportlab.pdfgen import canvas as pdf_canvas
 
-# -------------------------------------------------
+# --------------------------------------------------
 # FOLDERS
-# -------------------------------------------------
+# --------------------------------------------------
+
 os.makedirs("images", exist_ok=True)
 os.makedirs("signatures", exist_ok=True)
 os.makedirs("reports", exist_ok=True)
 
-# -------------------------------------------------
+# --------------------------------------------------
 # LOGIN
-# -------------------------------------------------
+# --------------------------------------------------
+
 users = {
     "admin": "1234",
     "mechanic": "wagon"
@@ -29,7 +31,7 @@ if "logged_in" not in st.session_state:
 
 if not st.session_state.logged_in:
 
-    st.title("🚆 Wagon Inspection Login")
+    st.title("Wagon Inspection Login")
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -45,14 +47,22 @@ if not st.session_state.logged_in:
 
     st.stop()
 
-# -------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------
+# --------------------------------------------------
+# PAGE
+# --------------------------------------------------
+
 st.set_page_config(page_title="Wagon Inspection", layout="centered")
 
-# -------------------------------------------------
+st.sidebar.write(f"Logged in: **{st.session_state.user}**")
+
+if st.sidebar.button("Logout"):
+    st.session_state.clear()
+    st.rerun()
+
+# --------------------------------------------------
 # DATABASE
-# -------------------------------------------------
+# --------------------------------------------------
+
 conn = sqlite3.connect("inspections.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -77,44 +87,35 @@ signature TEXT
 
 conn.commit()
 
-# ---- AUTO COLUMN CHECK ----
-cursor.execute("PRAGMA table_info(inspections)")
-columns = [col[1] for col in cursor.fetchall()]
+# --------------------------------------------------
+# LOAD DATA
+# --------------------------------------------------
 
-required_columns = [
-"wagon","datum","mechanic","status",
-"bremsen","achse","kupplung","federung",
-"puffer","rahmen","problem","image","signature"
-]
-
-for col in required_columns:
-    if col not in columns:
-        cursor.execute(f"ALTER TABLE inspections ADD COLUMN {col} TEXT")
-
-conn.commit()
-
-# -------------------------------------------------
-# DATA LOAD
-# -------------------------------------------------
 @st.cache_data
 def load_data():
     return pd.read_sql_query("SELECT * FROM inspections ORDER BY id DESC", conn)
 
 df = load_data()
 
-# -------------------------------------------------
-# PDF REPORT
-# -------------------------------------------------
+# --------------------------------------------------
+# PDF
+# --------------------------------------------------
+
 def generate_pdf(data):
 
     filename = f"reports/report_{uuid.uuid4()}.pdf"
 
     c = pdf_canvas.Canvas(filename)
 
-    c.drawString(100,800,f"Wagon: {data['wagon']}")
-    c.drawString(100,780,f"Date: {data['datum']}")
-    c.drawString(100,760,f"Mechanic: {data['mechanic']}")
-    c.drawString(100,740,f"Status: {data['status']}")
+    c.setFont("Helvetica-Bold",16)
+    c.drawString(100,820,"Wagon Inspection Report")
+
+    c.setFont("Helvetica",12)
+
+    c.drawString(100,790,f"Wagon: {data['wagon']}")
+    c.drawString(100,770,f"Date: {data['datum']}")
+    c.drawString(100,750,f"Mechanic: {data['mechanic']}")
+    c.drawString(100,730,f"Status: {data['status']}")
 
     y = 700
 
@@ -122,20 +123,25 @@ def generate_pdf(data):
         c.drawString(100,y,f"{key}: {data[key]}")
         y -= 20
 
-    c.drawString(100,y-20,f"Problem: {data['problem']}")
+    c.drawString(100,y-20,"Problem / Nalog")
+
+    text = c.beginText(100,y-40)
+    text.textLines(data["problem"])
+    c.drawText(text)
 
     c.save()
 
     return filename
 
-# -------------------------------------------------
+# --------------------------------------------------
 # DASHBOARD
-# -------------------------------------------------
-st.title("🚆 Wagen Inspection")
+# --------------------------------------------------
+
+st.title("🚆 Wagon Inspection")
 
 col1,col2,col3 = st.columns(3)
 
-col1.metric("Total Inspektionen", len(df))
+col1.metric("Total Inspections", len(df))
 
 defects = df[
 (df["bremsen"]=="Defekt") |
@@ -146,62 +152,55 @@ defects = df[
 (df["rahmen"]=="Defekt")
 ]
 
-col2.metric("Gefundene Defekte", len(defects))
+col2.metric("Defects", len(defects))
 
 wagons = df["wagon"].nunique() if len(df)>0 else 0
-col3.metric("Wagen", wagons)
+col3.metric("Wagons", wagons)
 
-# -------------------------------------------------
-# TABS
-# -------------------------------------------------
 tab1, tab2, tab3, tab4 = st.tabs([
 "Neue Inspektion",
 "Historie",
-"Offene Defekte",
+"Defekte",
 "Statistik"
 ])
 
-# -------------------------------------------------
+# --------------------------------------------------
 # CHECK FUNCTION
-# -------------------------------------------------
+# --------------------------------------------------
+
 def check(name):
 
-    choice = st.radio(name,["OK","Defekt"],horizontal=True,key=name)
+    return st.radio(
+        name,
+        ["OK","Defekt"],
+        horizontal=True,
+        key=name
+    )
 
-    if choice == "OK":
-        st.success("OK")
-    else:
-        st.error("DEFEKT")
+# --------------------------------------------------
+# INSPECTION
+# --------------------------------------------------
 
-    return choice
-
-# -------------------------------------------------
-# NEW INSPECTION
-# -------------------------------------------------
 with tab1:
 
     wagon = st.text_input("Wagennummer")
-    mechanic = st.text_input("Mechaniker Name", value=st.session_state.user)
+    mechanic = st.text_input("Mechaniker", value=st.session_state.user)
 
     datum = st.date_input("Datum", date.today())
 
-    status = st.selectbox(
-        "Status Wagen",
-        ["OK","In Reparatur","Gesperrt"]
-    )
+    status = st.selectbox("Status", ["OK","In Reparatur","Gesperrt"])
 
     st.subheader("Checkliste")
 
-    bremsen = check("Bremsen")
-    achse = check("Achse")
-    kupplung = check("Kupplung")
-    federung = check("Federung")
-    puffer = check("Puffer")
-    rahmen = check("Rahmen")
+    bremsen = check("bremsen")
+    achse = check("achse")
+    kupplung = check("kupplung")
+    federung = check("federung")
+    puffer = check("puffer")
+    rahmen = check("rahmen")
 
-    problem = st.text_area("Problem Beschreibung")
+    problem = st.text_area("Problem / Nalog")
 
-    # FOTO
     st.subheader("Foto")
 
     image = st.camera_input("Foto aufnehmen")
@@ -209,40 +208,62 @@ with tab1:
     image_path = ""
 
     if image:
+
         filename = f"{uuid.uuid4()}.png"
         image_path = f"images/{filename}"
 
         with open(image_path,"wb") as f:
             f.write(image.getbuffer())
 
-        st.image(image)
-
-    # SIGNATURE
     st.subheader("Unterschrift")
 
-    canvas_result = st_canvas(
-        fill_color="black",
-        stroke_width=3,
-        stroke_color="black",
-        background_color="white",
-        height=200,
-        width=500,
-        drawing_mode="freedraw",
-        key="signature"
-    )
+    if "sign_mode" not in st.session_state:
+        st.session_state.sign_mode = False
 
-    if st.button("Inspektion speichern"):
+    signature_path = ""
 
-        if wagon == "":
-            st.warning("Bitte Wagennummer eingeben")
+    if not st.session_state.sign_mode:
+
+        if st.button("Start Signing"):
+            st.session_state.sign_mode = True
+            st.rerun()
+
+    else:
+
+        canvas_result = st_canvas(
+            fill_color="black",
+            stroke_width=3,
+            stroke_color="black",
+            background_color="white",
+            height=200,
+            width=500,
+            drawing_mode="freedraw",
+        )
+
+        if st.button("Clear Signature"):
+            st.session_state.sign_mode = False
+            st.rerun()
+
+    # SAVE
+
+    if st.button("Save Inspection"):
+
+        if wagon.strip() == "":
+            st.error("Wagennummer ist erforderlich")
             st.stop()
 
-        signature_path = ""
+        if not st.session_state.sign_mode:
+            st.error("Bitte unterschreiben")
+            st.stop()
 
-        if canvas_result.image_data is not None:
-            signature_path = f"signatures/{uuid.uuid4()}.png"
-            img = Image.fromarray(canvas_result.image_data.astype("uint8"))
-            img.save(signature_path)
+        if canvas_result.image_data is None:
+            st.error("Bitte unterschreiben")
+            st.stop()
+
+        signature_path = f"signatures/{uuid.uuid4()}.png"
+
+        img = Image.fromarray(canvas_result.image_data.astype("uint8"))
+        img.save(signature_path)
 
         cursor.execute("""
         INSERT INTO inspections
@@ -256,7 +277,7 @@ with tab1:
 
         conn.commit()
 
-        pdf = generate_pdf({
+        pdf_file = generate_pdf({
             "wagon":wagon,
             "datum":datum,
             "mechanic":mechanic,
@@ -270,63 +291,48 @@ with tab1:
             "problem":problem
         })
 
-        st.success("Inspektion gespeichert")
+        st.session_state["last_pdf"] = pdf_file
 
-        with open(pdf,"rb") as f:
-            st.download_button("Download PDF Report",f,file_name="report.pdf")
+        st.success("Inspection saved")
 
+        st.session_state.sign_mode = False
         st.cache_data.clear()
-        st.rerun()
 
-# -------------------------------------------------
-# HISTORY
-# -------------------------------------------------
-with tab2:
+# --------------------------------------------------
+# PDF DOWNLOAD
+# --------------------------------------------------
 
-    search = st.text_input("Wagon suchen")
+if "last_pdf" in st.session_state:
 
-    if search:
-        filtered = df[df["wagon"].str.contains(search)]
-    else:
-        filtered = df
-
-    st.dataframe(filtered)
-
-    if st.button("Export Excel"):
-
-        file = "inspections_export.xlsx"
-        filtered.to_excel(file,index=False)
+    with open(st.session_state["last_pdf"], "rb") as f:
 
         st.download_button(
-            "Download Excel",
-            open(file,"rb"),
-            file_name="inspections.xlsx"
+            "Download PDF Report",
+            f,
+            file_name="inspection_report.pdf"
         )
 
-# -------------------------------------------------
-# OPEN DEFECTS
-# -------------------------------------------------
+# --------------------------------------------------
+# HISTORY
+# --------------------------------------------------
+
+with tab2:
+
+    st.dataframe(df)
+
+# --------------------------------------------------
+# DEFECTS
+# --------------------------------------------------
+
 with tab3:
-
-    st.subheader("Offene Defekte")
-
-    defects = df[
-        (df["bremsen"]=="Defekt") |
-        (df["achse"]=="Defekt") |
-        (df["kupplung"]=="Defekt") |
-        (df["federung"]=="Defekt") |
-        (df["puffer"]=="Defekt") |
-        (df["rahmen"]=="Defekt")
-    ]
 
     st.dataframe(defects)
 
-# -------------------------------------------------
+# --------------------------------------------------
 # STATISTICS
-# -------------------------------------------------
-with tab4:
+# --------------------------------------------------
 
-    st.subheader("Defekt Statistik")
+with tab4:
 
     defect_counts = {
         "Bremsen":(df["bremsen"]=="Defekt").sum(),
