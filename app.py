@@ -5,17 +5,12 @@ from datetime import date
 import os
 import uuid
 from PIL import Image
-from streamlit_drawable_canvas import st_canvas
-import plotly.express as px
-from reportlab.pdfgen import canvas as pdf_canvas
 
 # --------------------------------------------------
 # FOLDERS
 # --------------------------------------------------
 
 os.makedirs("images", exist_ok=True)
-os.makedirs("signatures", exist_ok=True)
-os.makedirs("reports", exist_ok=True)
 
 # --------------------------------------------------
 # LOGIN
@@ -80,8 +75,7 @@ federung TEXT,
 puffer TEXT,
 rahmen TEXT,
 problem TEXT,
-image TEXT,
-signature TEXT
+images TEXT
 )
 """)
 
@@ -98,70 +92,14 @@ def load_data():
 df = load_data()
 
 # --------------------------------------------------
-# PDF
-# --------------------------------------------------
-
-def generate_pdf(data):
-
-    filename = f"reports/report_{uuid.uuid4()}.pdf"
-
-    c = pdf_canvas.Canvas(filename)
-
-    c.setFont("Helvetica-Bold",16)
-    c.drawString(100,820,"Wagon Inspection Report")
-
-    c.setFont("Helvetica",12)
-
-    c.drawString(100,790,f"Wagon: {data['wagon']}")
-    c.drawString(100,770,f"Date: {data['datum']}")
-    c.drawString(100,750,f"Mechanic: {data['mechanic']}")
-    c.drawString(100,730,f"Status: {data['status']}")
-
-    y = 700
-
-    for key in ["bremsen","achse","kupplung","federung","puffer","rahmen"]:
-        c.drawString(100,y,f"{key}: {data[key]}")
-        y -= 20
-
-    c.drawString(100,y-20,"Problem / Nalog")
-
-    text = c.beginText(100,y-40)
-    text.textLines(data["problem"])
-    c.drawText(text)
-
-    c.save()
-
-    return filename
-
-# --------------------------------------------------
 # DASHBOARD
 # --------------------------------------------------
 
 st.title("🚆 Wagon Inspection")
 
-col1,col2,col3 = st.columns(3)
-
-col1.metric("Total Inspections", len(df))
-
-defects = df[
-(df["bremsen"]=="Defekt") |
-(df["achse"]=="Defekt") |
-(df["kupplung"]=="Defekt") |
-(df["federung"]=="Defekt") |
-(df["puffer"]=="Defekt") |
-(df["rahmen"]=="Defekt")
-]
-
-col2.metric("Defects", len(defects))
-
-wagons = df["wagon"].nunique() if len(df)>0 else 0
-col3.metric("Wagons", wagons)
-
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2 = st.tabs([
 "Neue Inspektion",
-"Historie",
-"Defekte",
-"Statistik"
+"Historie"
 ])
 
 # --------------------------------------------------
@@ -178,7 +116,7 @@ def check(name):
     )
 
 # --------------------------------------------------
-# INSPECTION
+# NEW INSPECTION
 # --------------------------------------------------
 
 with tab1:
@@ -201,50 +139,37 @@ with tab1:
 
     problem = st.text_area("Problem / Nalog")
 
-    st.subheader("Foto")
+    # ----------------------------------------
+    # MULTIPLE IMAGES
+    # ----------------------------------------
 
-    image = st.camera_input("Foto aufnehmen")
+    st.subheader("Fotos")
 
-    image_path = ""
+    images = st.file_uploader(
+        "Fotos hochladen",
+        type=["png","jpg","jpeg"],
+        accept_multiple_files=True
+    )
 
-    if image:
+    image_paths = []
 
-        filename = f"{uuid.uuid4()}.png"
-        image_path = f"images/{filename}"
+    if images:
 
-        with open(image_path,"wb") as f:
-            f.write(image.getbuffer())
+        for img in images:
 
-    st.subheader("Unterschrift")
+            filename = f"{uuid.uuid4()}.png"
+            path = f"images/{filename}"
 
-    if "sign_mode" not in st.session_state:
-        st.session_state.sign_mode = False
+            with open(path,"wb") as f:
+                f.write(img.getbuffer())
 
-    signature_path = ""
+            image_paths.append(path)
 
-    if not st.session_state.sign_mode:
+        st.success(f"{len(image_paths)} image(s) ready")
 
-        if st.button("Start Signing"):
-            st.session_state.sign_mode = True
-            st.rerun()
-
-    else:
-
-        canvas_result = st_canvas(
-            fill_color="black",
-            stroke_width=3,
-            stroke_color="black",
-            background_color="white",
-            height=200,
-            width=500,
-            drawing_mode="freedraw",
-        )
-
-        if st.button("Clear Signature"):
-            st.session_state.sign_mode = False
-            st.rerun()
-
+    # ----------------------------------------
     # SAVE
+    # ----------------------------------------
 
     if st.button("Save Inspection"):
 
@@ -252,65 +177,23 @@ with tab1:
             st.error("Wagennummer ist erforderlich")
             st.stop()
 
-        if not st.session_state.sign_mode:
-            st.error("Bitte unterschreiben")
-            st.stop()
-
-        if canvas_result.image_data is None:
-            st.error("Bitte unterschreiben")
-            st.stop()
-
-        signature_path = f"signatures/{uuid.uuid4()}.png"
-
-        img = Image.fromarray(canvas_result.image_data.astype("uint8"))
-        img.save(signature_path)
+        image_string = ",".join(image_paths)
 
         cursor.execute("""
         INSERT INTO inspections
-        (wagon,datum,mechanic,status,bremsen,achse,kupplung,federung,puffer,rahmen,problem,image,signature)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (wagon,datum,mechanic,status,bremsen,achse,kupplung,federung,puffer,rahmen,problem,images)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """,(
         wagon,datum,mechanic,status,
         bremsen,achse,kupplung,federung,
-        puffer,rahmen,problem,image_path,signature_path
+        puffer,rahmen,problem,image_string
         ))
 
         conn.commit()
 
-        pdf_file = generate_pdf({
-            "wagon":wagon,
-            "datum":datum,
-            "mechanic":mechanic,
-            "status":status,
-            "bremsen":bremsen,
-            "achse":achse,
-            "kupplung":kupplung,
-            "federung":federung,
-            "puffer":puffer,
-            "rahmen":rahmen,
-            "problem":problem
-        })
-
-        st.session_state["last_pdf"] = pdf_file
-
         st.success("Inspection saved")
 
-        st.session_state.sign_mode = False
         st.cache_data.clear()
-
-# --------------------------------------------------
-# PDF DOWNLOAD
-# --------------------------------------------------
-
-if "last_pdf" in st.session_state:
-
-    with open(st.session_state["last_pdf"], "rb") as f:
-
-        st.download_button(
-            "Download PDF Report",
-            f,
-            file_name="inspection_report.pdf"
-        )
 
 # --------------------------------------------------
 # HISTORY
@@ -318,36 +201,35 @@ if "last_pdf" in st.session_state:
 
 with tab2:
 
-    st.dataframe(df)
+    st.subheader("Inspection History")
 
-# --------------------------------------------------
-# DEFECTS
-# --------------------------------------------------
+    for index,row in df.iterrows():
 
-with tab3:
+        with st.expander(f"Wagon {row['wagon']} | {row['datum']}"):
 
-    st.dataframe(defects)
+            st.write("Mechanic:", row["mechanic"])
+            st.write("Status:", row["status"])
 
-# --------------------------------------------------
-# STATISTICS
-# --------------------------------------------------
+            st.write("Bremsen:", row["bremsen"])
+            st.write("Achse:", row["achse"])
+            st.write("Kupplung:", row["kupplung"])
+            st.write("Federung:", row["federung"])
+            st.write("Puffer:", row["puffer"])
+            st.write("Rahmen:", row["rahmen"])
 
-with tab4:
+            st.write("Problem:", row["problem"])
 
-    defect_counts = {
-        "Bremsen":(df["bremsen"]=="Defekt").sum(),
-        "Achse":(df["achse"]=="Defekt").sum(),
-        "Kupplung":(df["kupplung"]=="Defekt").sum(),
-        "Federung":(df["federung"]=="Defekt").sum(),
-        "Puffer":(df["puffer"]=="Defekt").sum(),
-        "Rahmen":(df["rahmen"]=="Defekt").sum()
-    }
+            # -----------------------------
+            # SHOW IMAGES
+            # -----------------------------
 
-    chart_df = pd.DataFrame({
-        "Teil": defect_counts.keys(),
-        "Defekte": defect_counts.values()
-    })
+            if row["images"]:
 
-    fig = px.bar(chart_df, x="Teil", y="Defekte")
+                paths = row["images"].split(",")
 
-    st.plotly_chart(fig)
+                st.write("Fotos:")
+
+                cols = st.columns(3)
+
+                for i,p in enumerate(paths):
+                    cols[i % 3].image(p, use_column_width=True)
